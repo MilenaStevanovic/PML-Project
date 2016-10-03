@@ -1,0 +1,123 @@
+# Weight Lifting Exercises - Recognition of exercise execution quality
+
+## Executive Summary
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+The goal of this analysis is to predict "how (well)" an activity was performed. The "classe" variable in the training set contains manner in which the exercise was done. 
+
+Data are transformed using Principal Component Analysis and 4 machine learning models are trained and compared. Random Forest model is the most accurate with an accuracy of almost 100%.
+
+## Data Loading and Patitioning
+
+The training data set is partioned into 2 sets: training_initial (80%) and validation (20%). Validation set is going to be used for model testing.
+
+```{r "data loading", cache=TRUE}
+setwd("C:/Projects/R/Coursera/08.04.02_Assignment Course Project 1")
+training_url    <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testing_url     <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training_start  <- read.csv(url(training_url), na.strings=c("NA","#DIV/0!",""))
+testing         <- read.csv(url(testing_url), na.strings=c("NA","#DIV/0!",""))
+```
+
+```{r "patitioning", message=FALSE, warning=FALSE}
+library(caret)
+validation_index    <- createDataPartition(training_start$classe, p=0.80, list=FALSE)
+training_initial    <- training_start[validation_index,]
+validation          <- training_start[-validation_index,]
+```
+
+## Data Cleaning
+
+columns that have more than 90% NA values are removed from the training set.
+
+```{r "NA values", message=FALSE, warning=FALSE,R.options=list(max.print=25), fig.height=7, fig.width=15}
+library(VIM)
+aggr_plot <- aggr(training_initial, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, 
+                   labels=names(training_initial), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+not_na_columns <- aggr_plot$missings[aggr_plot$missings$Count<0.9*nrow(training_initial),"Variable"]
+training_not_na <- subset(training_initial, select = c(not_na_columns))
+```
+
+First 7 column are irrelevant, so they are also removed. 
+
+```{r "feature selection", message=FALSE, warning=FALSE}
+colnames(training_not_na[,c(1:7)])
+training_clean<-training_not_na[,-c(1:7)]
+```
+
+## Preprocessing
+
+PCA is used in order to reduce dimensionality. PCA needed 26 components to capture 95 percent of the variance.
+
+```{r "preProcessing", message=FALSE, warning=FALSE, cache=TRUE}
+preprocessParams <- preProcess(training_clean, method="pca")
+training_transformed <- predict(preprocessParams,training_clean)
+dim (training_transformed)
+```
+
+## Models Building
+
+We will train the 4 machine learning models (Regression Trees, Random Forest, Generalized Boosted Regression Modeling and Support Vector Machine with Radial Basis Function) that we will compare. We will use transformed training data and repeated k-fold cross validation with 5 folds and 3 repeats (to evaluate the capability of the models on unseen data).
+
+```{r "trainControl", message=FALSE, warning=FALSE, cache=TRUE}
+trainControl <- trainControl(method="repeatedcv", number=5, repeats=3, allowParallel=TRUE)
+metric <-"Accuracy"
+```
+
+```{r "rpart", message=FALSE, warning=FALSE, cache=TRUE}
+set.seed(2000)
+fit.rpart <-train(classe~.,data=training_transformed,method="rpart", metric=metric, trControl=trainControl)
+```
+
+```{r "rf", message=FALSE, warning=FALSE, cache=TRUE}
+set.seed(2000)
+fit.rf <-train(classe~.,data=training_transformed,method="rf", metric=metric, trControl=trainControl)
+```
+
+```{r "gbm", message=FALSE, warning=FALSE, cache=TRUE}
+set.seed(2000)
+fit.gbm <-train(classe~.,data=training_transformed,method="gbm", metric=metric, trControl=trainControl, verbose=FALSE)
+```
+
+```{r "svmRadial", message=FALSE, warning=FALSE, cache=TRUE}
+set.seed(2000)
+fit.svmR <-train(classe~.,data=training_transformed,method="svmRadial", metric=metric, trControl=trainControl)
+```
+
+## Models Comparing
+
+The estimated accuracy of the constructed models are compared.
+
+```{r "Compare algorithms", message=FALSE, warning=FALSE, cache=TRUE}
+results <- resamples(list(RPART=fit.rpart, RF=fit.rf, GBM=fit.gbm, SVMR=fit.svmR)) #This function checks that the models are comparable and that they used the same training scheme (trainControl confguration).
+summary(results)
+dotplot(results)
+```
+ 
+Mean accuracy is the best for Random Forest model.
+ 
+## Model Validation
+
+In order to validate Random Forest model, we check model accuracy on validation set.
+
+```{r "validation", message=FALSE, warning=FALSE, cache=TRUE}
+validation_clean <- subset(validation,select = colnames(training_clean))
+validation_transformed <- predict(preprocessParams,validation_clean)
+pr.rf <- predict(fit.rf,validation_transformed)
+cm.rf <- confusionMatrix(pr.rf, validation_transformed$classe)
+cm.rf
+```
+
+Since the accuracy is almost 100% and expected out of sample error is very small, model is not overfitted and it is going to be used for prediction of 20 test samples.
+
+## Test Prediction
+
+Finally, we can use our prediction model to predict 20 different test cases.
+
+```{r "prediction", message=FALSE, warning=FALSE, cache=TRUE}
+testing_clean <- subset(testing, select = colnames(training_clean[,1:52]))
+testing_transformed <- predict(preprocessParams,testing_clean)
+pr.rf <- predict(fit.rf,testing_transformed)
+pr.rf
+```
